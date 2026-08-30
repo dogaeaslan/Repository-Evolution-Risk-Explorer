@@ -1,0 +1,47 @@
+### IntelliJ IDEA ###
+.idea/
+*.iml
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+.kotlin
+
+### Gradle ###
+.gradle/
+.gradle-user-home/
+build/
+
+### Node and Vite ###
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+
+### Local application output ###
+exports/
+demo-repository/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+01-repository-evolution-risk-explorer.md
