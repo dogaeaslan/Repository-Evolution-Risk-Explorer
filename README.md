@@ -4,7 +4,7 @@ Repository Evolution Risk Explorer is a local-first portfolio application for ex
 
 ## Current status
 
-Milestone 0 establishes the Java 21/Spring Boot backend, React/TypeScript/Vite frontend, Gradle build, automated tests, formatting checks, and Windows/Linux CI. Repository analysis begins in Milestone 1.
+Milestone 1 provides the first complete vertical slice: generate a deterministic Git repository, analyze file change frequency with JGit, inspect the commit evidence behind each count, and export the result as JSON. The codebase also includes the Java 21/Spring Boot backend, React/TypeScript/Vite frontend, Gradle build, automated tests, formatting checks, and Windows/Linux CI.
 
 ## Prerequisites
 
@@ -14,7 +14,29 @@ Milestone 0 establishes the Java 21/Spring Boot backend, React/TypeScript/Vite f
 
 Gradle and Node.js do not need to be installed globally; their pinned versions are managed by the build.
 
-## Run the bundled application
+## Run the first analysis
+
+Create the deterministic demonstration repository. The task only replaces a repository previously created by the same generator; it refuses to overwrite an unrelated directory.
+
+On Windows:
+
+```powershell
+.\gradlew.bat createDemoRepository
+.\gradlew.bat bootRun
+```
+
+On Linux or macOS:
+
+```bash
+./gradlew createDemoRepository
+./gradlew bootRun
+```
+
+Then open `http://localhost:8080` and select **Analyze repository**. The form defaults to `demo-repository` on `main`. The generated history contains 14 traversed commits, 13 ordinary commits included in the metric, a six-commit high-churn file, a rename, multiple authors, and an excluded merge diff.
+
+Each ranked file expands to its supporting commits. **Export JSON** downloads the same traceable result for use outside the interface. Change frequency measures concentrated activity; it is evidence for investigation, not proof of defective design.
+
+## Run the bundled application with another repository
 
 On Windows:
 
@@ -28,7 +50,7 @@ On Linux or macOS:
 ./gradlew bootRun
 ```
 
-Then open `http://localhost:8080`. The backend status endpoint is available at `http://localhost:8080/api/system/status`.
+Then open `http://localhost:8080`, enter the local repository path and an exact local branch name, and start the analysis. The backend status endpoint is available at `http://localhost:8080/api/system/status`.
 
 ## Development workflow
 

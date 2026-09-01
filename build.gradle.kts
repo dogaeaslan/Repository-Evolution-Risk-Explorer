@@ -24,6 +24,7 @@ repositories {
 dependencies {
     implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.1"))
     implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.eclipse.jgit:org.eclipse.jgit:7.7.1.202607240634-r")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -100,6 +101,14 @@ tasks.register<NodeTask>("frontendDev") {
     description = "Starts the Vite development server on http://localhost:5173."
     dependsOn(tasks.npmInstall)
     script = file("frontend/node_modules/vite/bin/vite.js")
+}
+
+tasks.register<JavaExec>("createDemoRepository") {
+    group = "application"
+    description = "Creates the deterministic demonstration Git repository."
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "dev.riskexplorer.demo.DemoRepositoryGenerator"
+    args = listOf(layout.projectDirectory.dir("demo-repository").asFile.absolutePath)
 }
 
 tasks.processResources {
