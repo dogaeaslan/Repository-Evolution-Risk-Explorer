@@ -11,6 +11,7 @@ public record RepositoryAnalysis(
     Instant periodEnd,
     int traversedCommitCount,
     int analyzedCommitCount,
+    AnalysisScope scope,
     List<FileChangeFrequency> hotspots,
     List<AnalysisWarning> warnings) {
 

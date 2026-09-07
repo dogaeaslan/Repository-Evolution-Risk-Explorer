@@ -40,6 +40,8 @@ public class GitChangeFrequencyAnalyzer {
   public RepositoryAnalysis analyze(AnalysisRequest request) {
     String branch = validateBranch(request.branch());
     Path requestedPath = validateRepositoryPath(request.repositoryPath());
+    validateDateRange(request.fromInclusive(), request.toExclusive());
+    GitPathExclusions exclusions = new GitPathExclusions(request.exclusionPatterns());
 
     try (Repository repository = openRepository(requestedPath)) {
       Ref branchRef = repository.exactRef(Constants.R_HEADS + branch);
@@ -48,7 +50,7 @@ public class GitChangeFrequencyAnalyzer {
             "Branch '" + branch + "' does not exist in the selected repository.");
       }
 
-      return analyzeHistory(repository, branchRef, branch);
+      return analyzeHistory(repository, branchRef, branch, request, exclusions);
     } catch (AnalysisException exception) {
       throw exception;
     } catch (IOException exception) {
@@ -56,13 +58,20 @@ public class GitChangeFrequencyAnalyzer {
     }
   }
 
-  private RepositoryAnalysis analyzeHistory(Repository repository, Ref branchRef, String branch)
+  private RepositoryAnalysis analyzeHistory(
+      Repository repository,
+      Ref branchRef,
+      String branch,
+      AnalysisRequest request,
+      GitPathExclusions exclusions)
       throws IOException {
     Map<String, FileAccumulator> activeFiles = new LinkedHashMap<>();
     List<FileAccumulator> allFiles = new ArrayList<>();
     int traversedCommitCount = 0;
     int analyzedCommitCount = 0;
     int skippedMergeCount = 0;
+    int dateExcludedCommitCount = 0;
+    int pathExcludedFileChangeCount = 0;
     Instant periodStart = null;
     Instant periodEnd = null;
 
@@ -80,27 +89,35 @@ public class GitChangeFrequencyAnalyzer {
       for (RevCommit commit : walk) {
         traversedCommitCount++;
         Instant authoredAt = commit.getAuthorIdent().getWhenAsInstant();
-        periodStart =
-            periodStart == null || authoredAt.isBefore(periodStart) ? authoredAt : periodStart;
-        periodEnd = periodEnd == null || authoredAt.isAfter(periodEnd) ? authoredAt : periodEnd;
 
         if (commit.getParentCount() > 1) {
           skippedMergeCount++;
           continue;
         }
 
-        analyzedCommitCount++;
-        CommitEvidence evidence =
-            new CommitEvidence(
-                commit.getName(),
-                authoredAt,
-                commit.getAuthorIdent().getName(),
-                commit.getShortMessage());
+        boolean dateEligible =
+            isDateEligible(authoredAt, request.fromInclusive(), request.toExclusive());
+        CommitEvidence evidence = null;
+        if (dateEligible) {
+          analyzedCommitCount++;
+          periodStart =
+              periodStart == null || authoredAt.isBefore(periodStart) ? authoredAt : periodStart;
+          periodEnd = periodEnd == null || authoredAt.isAfter(periodEnd) ? authoredAt : periodEnd;
+          evidence =
+              new CommitEvidence(
+                  commit.getName(),
+                  authoredAt,
+                  commit.getAuthorIdent().getName(),
+                  commit.getShortMessage());
+        } else {
+          dateExcludedCommitCount++;
+        }
 
         AbstractTreeIterator oldTree = oldTree(reader, walk, commit);
         AbstractTreeIterator newTree = treeIterator(reader, commit.getTree());
         for (DiffEntry entry : formatter.scan(oldTree, newTree)) {
-          recordChange(entry, evidence, activeFiles, allFiles);
+          pathExcludedFileChangeCount +=
+              recordChange(entry, commit.getName(), evidence, exclusions, activeFiles, allFiles);
         }
       }
     }
@@ -113,10 +130,25 @@ public class GitChangeFrequencyAnalyzer {
               skippedMergeCount
                   + " merge commit diff(s) were excluded to avoid double-counting changes; reachable ordinary commits were analyzed individually."));
     }
+    if (dateExcludedCommitCount > 0) {
+      warnings.add(
+          new AnalysisWarning(
+              "DATE_RANGE_APPLIED",
+              dateExcludedCommitCount
+                  + " ordinary commit(s) outside the requested date range were traversed for file identity but excluded from metrics."));
+    }
+    if (pathExcludedFileChangeCount > 0) {
+      warnings.add(
+          new AnalysisWarning(
+              "PATHS_EXCLUDED",
+              pathExcludedFileChangeCount
+                  + " in-range file change(s) matched the configured Git-path exclusions and were omitted from metrics."));
+    }
 
     List<FileChangeFrequency> hotspots =
         allFiles.stream()
             .map(FileAccumulator::toObservation)
+            .filter(observation -> observation.commitCount() > 0)
             .sorted(
                 Comparator.comparingInt(FileChangeFrequency::commitCount)
                     .reversed()
@@ -131,42 +163,62 @@ public class GitChangeFrequencyAnalyzer {
         periodEnd,
         traversedCommitCount,
         analyzedCommitCount,
+        new AnalysisScope(
+            request.fromInclusive(),
+            request.toExclusive(),
+            exclusions.patterns(),
+            MergePolicy.EXCLUDE_MERGE_DIFFS,
+            dateExcludedCommitCount,
+            pathExcludedFileChangeCount),
         hotspots,
         warnings);
   }
 
-  private static void recordChange(
+  private static int recordChange(
       DiffEntry entry,
+      String commitId,
       CommitEvidence evidence,
+      GitPathExclusions exclusions,
       Map<String, FileAccumulator> activeFiles,
       List<FileAccumulator> allFiles) {
+    boolean pathExcluded = evidence != null && exclusions.matches(eligibilityPath(entry));
+    CommitEvidence eligibleEvidence = pathExcluded ? null : evidence;
     switch (entry.getChangeType()) {
-      case ADD -> newFile(entry.getNewPath(), evidence, activeFiles, allFiles).record(evidence);
-      case COPY -> newFile(entry.getNewPath(), evidence, activeFiles, allFiles).record(evidence);
+      case ADD ->
+          newFile(entry.getNewPath(), commitId, activeFiles, allFiles).record(eligibleEvidence);
+      case COPY ->
+          newFile(entry.getNewPath(), commitId, activeFiles, allFiles).record(eligibleEvidence);
       case MODIFY ->
-          currentFile(entry.getNewPath(), evidence, activeFiles, allFiles).record(evidence);
+          currentFile(entry.getNewPath(), commitId, activeFiles, allFiles).record(eligibleEvidence);
       case DELETE -> {
-        FileAccumulator deleted = currentFile(entry.getOldPath(), evidence, activeFiles, allFiles);
-        deleted.record(evidence);
+        FileAccumulator deleted = currentFile(entry.getOldPath(), commitId, activeFiles, allFiles);
+        deleted.record(eligibleEvidence);
         deleted.markDeleted();
         activeFiles.remove(entry.getOldPath());
       }
       case RENAME -> {
-        FileAccumulator renamed = currentFile(entry.getOldPath(), evidence, activeFiles, allFiles);
-        renamed.record(evidence);
+        FileAccumulator renamed = currentFile(entry.getOldPath(), commitId, activeFiles, allFiles);
+        renamed.record(eligibleEvidence);
         activeFiles.remove(entry.getOldPath());
         renamed.renameTo(entry.getNewPath());
         activeFiles.put(entry.getNewPath(), renamed);
       }
     }
+    return pathExcluded ? 1 : 0;
+  }
+
+  private static String eligibilityPath(DiffEntry entry) {
+    return entry.getChangeType() == DiffEntry.ChangeType.DELETE
+        ? entry.getOldPath()
+        : entry.getNewPath();
   }
 
   private static FileAccumulator newFile(
       String path,
-      CommitEvidence evidence,
+      String firstCommitId,
       Map<String, FileAccumulator> activeFiles,
       List<FileAccumulator> allFiles) {
-    FileAccumulator accumulator = new FileAccumulator(path, evidence.commitId());
+    FileAccumulator accumulator = new FileAccumulator(path, firstCommitId);
     activeFiles.put(path, accumulator);
     allFiles.add(accumulator);
     return accumulator;
@@ -174,11 +226,11 @@ public class GitChangeFrequencyAnalyzer {
 
   private static FileAccumulator currentFile(
       String path,
-      CommitEvidence evidence,
+      String firstCommitId,
       Map<String, FileAccumulator> activeFiles,
       List<FileAccumulator> allFiles) {
     FileAccumulator existing = activeFiles.get(path);
-    return existing != null ? existing : newFile(path, evidence, activeFiles, allFiles);
+    return existing != null ? existing : newFile(path, firstCommitId, activeFiles, allFiles);
   }
 
   private static AbstractTreeIterator oldTree(ObjectReader reader, RevWalk walk, RevCommit commit)
@@ -238,6 +290,19 @@ public class GitChangeFrequencyAnalyzer {
     return trimmed;
   }
 
+  private static void validateDateRange(Instant fromInclusive, Instant toExclusive) {
+    if (fromInclusive != null && toExclusive != null && !fromInclusive.isBefore(toExclusive)) {
+      throw new AnalysisException(
+          "The analysis start must be earlier than the exclusive end instant.");
+    }
+  }
+
+  private static boolean isDateEligible(
+      Instant authoredAt, Instant fromInclusive, Instant toExclusive) {
+    return (fromInclusive == null || !authoredAt.isBefore(fromInclusive))
+        && (toExclusive == null || authoredAt.isBefore(toExclusive));
+  }
+
   private static final class FileAccumulator {
 
     private final String fileIdentity;
@@ -255,7 +320,7 @@ public class GitChangeFrequencyAnalyzer {
     }
 
     private void record(CommitEvidence evidence) {
-      if (recordedCommitIds.add(evidence.commitId())) {
+      if (evidence != null && recordedCommitIds.add(evidence.commitId())) {
         commits.add(evidence);
       }
     }

@@ -11,6 +11,14 @@ const completedAnalysis = {
   periodEnd: "2025-01-14T09:00:00Z",
   traversedCommitCount: 14,
   analyzedCommitCount: 13,
+  scope: {
+    fromInclusive: null,
+    toExclusive: null,
+    exclusionPatterns: ["generated/**"],
+    mergePolicy: "EXCLUDE_MERGE_DIFFS",
+    dateExcludedCommitCount: 0,
+    pathExcludedFileChangeCount: 1,
+  },
   hotspots: [
     {
       fileIdentity: "file-1",
@@ -52,6 +60,9 @@ describe("App", () => {
       "demo-repository",
     );
     expect(screen.getByLabelText("Branch")).toHaveValue("main");
+    expect(screen.getByLabelText("From date (UTC)")).toHaveValue("");
+    expect(screen.getByLabelText("Through date (UTC)")).toHaveValue("");
+    expect(screen.getByLabelText("Exclude Git paths")).toHaveValue("generated/**");
     expect(
       screen.getByRole("heading", { name: "One metric, fully traceable." }),
     ).toBeInTheDocument();
@@ -73,6 +84,8 @@ describe("App", () => {
     expect(screen.getByText("src/HighChurn.java")).toBeInTheDocument();
     expect(screen.getByText("6")).toBeInTheDocument();
     expect(screen.getByText("1 merge commit diff was excluded.")).toBeInTheDocument();
+    expect(screen.getByText("All reachable dates")).toBeInTheDocument();
+    expect(screen.getAllByText("generated/**")).toHaveLength(2);
     expect(screen.getByText("hotfix: stabilize parser recovery")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Export JSON" })).toHaveAttribute(
       "href",
@@ -81,7 +94,46 @@ describe("App", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/analyses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repositoryPath: "demo-repository", branch: "main" }),
+      body: JSON.stringify({
+        repositoryPath: "demo-repository",
+        branch: "main",
+        fromInclusive: null,
+        toExclusive: null,
+        exclusionPatterns: ["generated/**"],
+      }),
+    });
+  });
+
+  it("converts inclusive UTC dates and line-separated exclusions into API scope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => completedAnalysis,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("From date (UTC)"), {
+      target: { value: "2025-01-08" },
+    });
+    fireEvent.change(screen.getByLabelText("Through date (UTC)"), {
+      target: { value: "2025-01-10" },
+    });
+    fireEvent.change(screen.getByLabelText("Exclude Git paths"), {
+      target: { value: " generated/**\n\nsrc/Pair?.java " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Analyze repository" }));
+
+    await screen.findByRole("heading", { name: "Files ranked by change frequency" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/analyses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repositoryPath: "demo-repository",
+        branch: "main",
+        fromInclusive: "2025-01-08T00:00:00Z",
+        toExclusive: "2025-01-11T00:00:00.000Z",
+        exclusionPatterns: ["generated/**", "src/Pair?.java"],
+      }),
     });
   });
 

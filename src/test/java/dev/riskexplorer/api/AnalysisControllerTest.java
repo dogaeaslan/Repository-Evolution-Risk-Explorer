@@ -1,7 +1,9 @@
 package dev.riskexplorer.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -11,14 +13,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import dev.riskexplorer.analysis.AnalysisException;
 import dev.riskexplorer.analysis.AnalysisRequest;
+import dev.riskexplorer.analysis.AnalysisScope;
 import dev.riskexplorer.analysis.AnalysisService;
 import dev.riskexplorer.analysis.CommitEvidence;
 import dev.riskexplorer.analysis.FileChangeFrequency;
+import dev.riskexplorer.analysis.MergePolicy;
 import dev.riskexplorer.analysis.RepositoryAnalysis;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -54,8 +59,17 @@ class AnalysisControllerTest {
         .andExpect(status().isCreated())
         .andExpect(header().string("Location", "/api/analyses/analysis-1"))
         .andExpect(jsonPath("$.branch").value("main"))
+        .andExpect(jsonPath("$.scope.mergePolicy").value("EXCLUDE_MERGE_DIFFS"))
         .andExpect(jsonPath("$.hotspots[0].path").value("src/HighChurn.java"))
         .andExpect(jsonPath("$.hotspots[0].commits[0].commitId").value("abc123"));
+
+    ArgumentCaptor<AnalysisRequest> requestCaptor = ArgumentCaptor.forClass(AnalysisRequest.class);
+    verify(analysisService).analyze(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().repositoryPath()).isEqualTo("demo-repository");
+    assertThat(requestCaptor.getValue().branch()).isEqualTo("main");
+    assertThat(requestCaptor.getValue().fromInclusive()).isNull();
+    assertThat(requestCaptor.getValue().toExclusive()).isNull();
+    assertThat(requestCaptor.getValue().exclusionPatterns()).containsExactly("generated/**");
 
     mockMvc
         .perform(get("/api/analyses/analysis-1/export"))
@@ -104,6 +118,8 @@ class AnalysisControllerTest {
         timestamp,
         1,
         1,
+        new AnalysisScope(
+            null, null, List.of("generated/**"), MergePolicy.EXCLUDE_MERGE_DIFFS, 0, 1),
         List.of(hotspot),
         List.of());
   }

@@ -4,7 +4,7 @@ Repository Evolution Risk Explorer is a local-first portfolio application for ex
 
 ## Current status
 
-Milestone 1 provides the first complete vertical slice: generate a deterministic Git repository, analyze file change frequency with JGit, inspect the commit evidence behind each count, and export the result as JSON. The codebase also includes the Java 21/Spring Boot backend, React/TypeScript/Vite frontend, Gradle build, automated tests, formatting checks, and Windows/Linux CI.
+Milestone 1 is complete. Milestone 2 is in progress with configurable UTC date ranges, portable Git-path exclusions, effective-scope reporting, repository validation, branch traversal, rename-aware file identity, and explicit merge-diff policy. The application ranks file change frequency, exposes every contributing commit, and exports the same traceable result as JSON.
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ On Linux or macOS:
 ./gradlew bootRun
 ```
 
-Then open `http://localhost:8080` and select **Analyze repository**. The form defaults to `demo-repository` on `main`. The generated history contains 14 traversed commits, 13 ordinary commits included in the metric, a six-commit high-churn file, a rename, multiple authors, and an excluded merge diff.
+Then open `http://localhost:8080` and select **Analyze repository**. The form defaults to `demo-repository` on `main` and excludes `generated/**`. The generated history contains 14 traversed commits, 13 ordinary commits included in the metric, a six-commit high-churn file, a rename, multiple authors, an excluded generated file, and an excluded merge diff.
 
 Each ranked file expands to its supporting commits. **Export JSON** downloads the same traceable result for use outside the interface. Change frequency measures concentrated activity; it is evidence for investigation, not proof of defective design.
 
@@ -50,7 +50,9 @@ On Linux or macOS:
 ./gradlew bootRun
 ```
 
-Then open `http://localhost:8080`, enter the local repository path and an exact local branch name, and start the analysis. The backend status endpoint is available at `http://localhost:8080/api/system/status`.
+Then open `http://localhost:8080`, enter the local repository path and an exact local branch name, and start the analysis. You may select an inclusive start and through date in UTC and configure one exclusion glob per line. `*` matches within one Git-path segment, `?` matches one character within a segment, and `**` crosses folders. Clear the exclusion field to include generated paths. The completed result reports the exact normalized patterns and how many commits or file changes they excluded.
+
+The API represents date scope as an optional half-open interval: `fromInclusive` is included and `toExclusive` is excluded. The browser's **Through date** control converts the selected UTC day to the following midnight, so the whole selected day remains eligible. The backend status endpoint is available at `http://localhost:8080/api/system/status`.
 
 ## Development workflow
 
