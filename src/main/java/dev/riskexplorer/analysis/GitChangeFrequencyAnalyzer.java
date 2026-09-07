@@ -157,7 +157,7 @@ public class GitChangeFrequencyAnalyzer {
 
     return new RepositoryAnalysis(
         UUID.randomUUID().toString(),
-        repository.getWorkTree().toPath().toAbsolutePath().normalize().toString(),
+        repository.getWorkTree().toPath().toRealPath().toString(),
         branch,
         periodStart,
         periodEnd,
