@@ -4,7 +4,7 @@ Repository Evolution Risk Explorer is a local-first portfolio application for ex
 
 ## Current status
 
-Milestone 1 is complete. Milestone 2 is in progress with configurable UTC date ranges, portable Git-path exclusions, effective-scope reporting, repository validation, branch traversal, rename-aware file identity, and explicit merge-diff policy. The application ranks file change frequency, exposes every contributing commit, and exports the same traceable result as JSON.
+Milestone 1 is complete. Milestone 2 is in progress with configurable UTC date ranges, portable Git-path exclusions, effective-scope reporting, repository validation, branch traversal, rename-aware file identity, explicit merge-diff policy, and structured data-quality warnings. The application ranks file change frequency, exposes every contributing commit, reports selected-branch shallow-history boundaries, and exports the same traceable result as JSON.
 
 ## Prerequisites
 
@@ -53,6 +53,8 @@ On Linux or macOS:
 Then open `http://localhost:8080`, enter the local repository path and an exact local branch name, and start the analysis. You may select an inclusive start and through date in UTC and configure one exclusion glob per line. `*` matches within one Git-path segment, `?` matches one character within a segment, and `**` crosses folders. Clear the exclusion field to include generated paths. The completed result reports the exact normalized patterns and how many commits or file changes they excluded.
 
 The API represents date scope as an optional half-open interval: `fromInclusive` is included and `toExclusive` is excluded. The browser's **Through date** control converts the selected UTC day to the following midnight, so the whole selected day remains eligible. The backend status endpoint is available at `http://localhost:8080/api/system/status`.
+
+If the selected branch reaches a shallow-history boundary, the result is explicitly marked as incomplete. The boundary commit itself is not diffed against an empty tree because that would incorrectly classify every file already present at the boundary as newly added. Descendant commits with an available parent tree remain eligible. Fetch the repository's full history and analyze it again for complete metrics.
 
 ## Development workflow
 

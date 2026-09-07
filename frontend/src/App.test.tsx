@@ -39,7 +39,18 @@ const completedAnalysis = {
   warnings: [
     {
       code: "MERGE_DIFFS_EXCLUDED",
+      category: "POLICY",
+      severity: "INFO",
+      occurrenceCount: 1,
       message: "1 merge commit diff was excluded.",
+    },
+    {
+      code: "SHALLOW_HISTORY",
+      category: "DATA_QUALITY",
+      severity: "WARNING",
+      occurrenceCount: 1,
+      message:
+        "History is incomplete. Fetch the full repository history and analyze again.",
     },
   ],
 };
@@ -84,6 +95,12 @@ describe("App", () => {
     expect(screen.getByText("src/HighChurn.java")).toBeInTheDocument();
     expect(screen.getByText("6")).toBeInTheDocument();
     expect(screen.getByText("1 merge commit diff was excluded.")).toBeInTheDocument();
+    expect(screen.getByText("Data quality and limitations")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "History is incomplete. Fetch the full repository history and analyze again.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("All reachable dates")).toBeInTheDocument();
     expect(screen.getAllByText("generated/**")).toHaveLength(2);
     expect(screen.getByText("hotfix: stabilize parser recovery")).toBeInTheDocument();

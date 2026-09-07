@@ -16,8 +16,14 @@ type FileChangeFrequency = {
   commits: CommitEvidence[];
 };
 
+type AnalysisWarningCode =
+  "MERGE_DIFFS_EXCLUDED" | "DATE_RANGE_APPLIED" | "PATHS_EXCLUDED" | "SHALLOW_HISTORY";
+
 type AnalysisWarning = {
-  code: string;
+  code: AnalysisWarningCode;
+  category: "POLICY" | "DATA_QUALITY";
+  severity: "INFO" | "WARNING";
+  occurrenceCount: number;
   message: string;
 };
 
@@ -272,6 +278,13 @@ export function App() {
 }
 
 function AnalysisResults({ analysis }: { analysis: RepositoryAnalysis }) {
+  const dataQualityWarnings = analysis.warnings.filter(
+    (warning) => warning.category === "DATA_QUALITY",
+  );
+  const policyWarnings = analysis.warnings.filter(
+    (warning) => warning.category === "POLICY",
+  );
+
   return (
     <section className="results" aria-labelledby="results-title">
       <div className="results-heading">
@@ -336,12 +349,19 @@ function AnalysisResults({ analysis }: { analysis: RepositoryAnalysis }) {
       </dl>
 
       {analysis.warnings.length > 0 && (
-        <aside className="warning-panel" aria-labelledby="warnings-title">
-          <strong id="warnings-title">Analysis policy</strong>
-          {analysis.warnings.map((warning, index) => (
-            <p key={`${warning.code}-${index}`}>{warning.message}</p>
-          ))}
-        </aside>
+        <div className="warning-stack">
+          <WarningPanel
+            id="data-quality-warnings-title"
+            title="Data quality and limitations"
+            warnings={dataQualityWarnings}
+            isDataQuality
+          />
+          <WarningPanel
+            id="policy-warnings-title"
+            title="Analysis policy"
+            warnings={policyWarnings}
+          />
+        </div>
       )}
 
       <div className="table-frame">
@@ -410,5 +430,35 @@ function AnalysisResults({ analysis }: { analysis: RepositoryAnalysis }) {
         a file is defective or poorly designed.
       </p>
     </section>
+  );
+}
+
+function WarningPanel({
+  id,
+  title,
+  warnings,
+  isDataQuality = false,
+}: {
+  id: string;
+  title: string;
+  warnings: AnalysisWarning[];
+  isDataQuality?: boolean;
+}) {
+  if (warnings.length === 0) {
+    return null;
+  }
+
+  return (
+    <aside
+      className={`warning-panel${isDataQuality ? " data-quality-panel" : ""}`}
+      aria-labelledby={id}
+    >
+      <strong id={id}>{title}</strong>
+      <ul>
+        {warnings.map((warning) => (
+          <li key={warning.code}>{warning.message}</li>
+        ))}
+      </ul>
+    </aside>
   );
 }

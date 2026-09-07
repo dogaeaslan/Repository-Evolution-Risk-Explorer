@@ -15,6 +15,8 @@ import dev.riskexplorer.analysis.AnalysisException;
 import dev.riskexplorer.analysis.AnalysisRequest;
 import dev.riskexplorer.analysis.AnalysisScope;
 import dev.riskexplorer.analysis.AnalysisService;
+import dev.riskexplorer.analysis.AnalysisWarning;
+import dev.riskexplorer.analysis.AnalysisWarningCode;
 import dev.riskexplorer.analysis.CommitEvidence;
 import dev.riskexplorer.analysis.FileChangeFrequency;
 import dev.riskexplorer.analysis.MergePolicy;
@@ -61,7 +63,11 @@ class AnalysisControllerTest {
         .andExpect(jsonPath("$.branch").value("main"))
         .andExpect(jsonPath("$.scope.mergePolicy").value("EXCLUDE_MERGE_DIFFS"))
         .andExpect(jsonPath("$.hotspots[0].path").value("src/HighChurn.java"))
-        .andExpect(jsonPath("$.hotspots[0].commits[0].commitId").value("abc123"));
+        .andExpect(jsonPath("$.hotspots[0].commits[0].commitId").value("abc123"))
+        .andExpect(jsonPath("$.warnings[0].code").value("SHALLOW_HISTORY"))
+        .andExpect(jsonPath("$.warnings[0].category").value("DATA_QUALITY"))
+        .andExpect(jsonPath("$.warnings[0].severity").value("WARNING"))
+        .andExpect(jsonPath("$.warnings[0].occurrenceCount").value(1));
 
     ArgumentCaptor<AnalysisRequest> requestCaptor = ArgumentCaptor.forClass(AnalysisRequest.class);
     verify(analysisService).analyze(requestCaptor.capture());
@@ -80,7 +86,9 @@ class AnalysisControllerTest {
                 .string(
                     "Content-Disposition",
                     "attachment; filename=\"repository-analysis-analysis-1.json\""))
-        .andExpect(jsonPath("$.analysisId").value("analysis-1"));
+        .andExpect(jsonPath("$.analysisId").value("analysis-1"))
+        .andExpect(jsonPath("$.warnings[0].code").value("SHALLOW_HISTORY"))
+        .andExpect(jsonPath("$.warnings[0].category").value("DATA_QUALITY"));
   }
 
   @Test
@@ -121,6 +129,10 @@ class AnalysisControllerTest {
         new AnalysisScope(
             null, null, List.of("generated/**"), MergePolicy.EXCLUDE_MERGE_DIFFS, 0, 1),
         List.of(hotspot),
-        List.of());
+        List.of(
+            new AnalysisWarning(
+                AnalysisWarningCode.SHALLOW_HISTORY,
+                1,
+                "History for the selected branch is incomplete.")));
   }
 }

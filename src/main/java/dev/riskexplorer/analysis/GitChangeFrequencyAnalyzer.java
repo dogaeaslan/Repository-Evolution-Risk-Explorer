@@ -18,6 +18,7 @@ import java.util.UUID;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -70,10 +71,12 @@ public class GitChangeFrequencyAnalyzer {
     int traversedCommitCount = 0;
     int analyzedCommitCount = 0;
     int skippedMergeCount = 0;
+    int shallowBoundaryCount = 0;
     int dateExcludedCommitCount = 0;
     int pathExcludedFileChangeCount = 0;
     Instant periodStart = null;
     Instant periodEnd = null;
+    Set<ObjectId> shallowCommits = repository.getObjectDatabase().getShallowCommits();
 
     try (RevWalk walk = new RevWalk(repository);
         ObjectReader reader = repository.newObjectReader();
@@ -89,6 +92,11 @@ public class GitChangeFrequencyAnalyzer {
       for (RevCommit commit : walk) {
         traversedCommitCount++;
         Instant authoredAt = commit.getAuthorIdent().getWhenAsInstant();
+
+        if (shallowCommits.contains(commit.getId())) {
+          shallowBoundaryCount++;
+          continue;
+        }
 
         if (commit.getParentCount() > 1) {
           skippedMergeCount++;
@@ -123,24 +131,36 @@ public class GitChangeFrequencyAnalyzer {
     }
 
     List<AnalysisWarning> warnings = new ArrayList<>();
+    if (shallowBoundaryCount > 0) {
+      warnings.add(
+          new AnalysisWarning(
+              AnalysisWarningCode.SHALLOW_HISTORY,
+              shallowBoundaryCount,
+              "History for the selected branch stops at "
+                  + shallowBoundaryCount
+                  + " shallow boundary commit(s). Results include only changes with available parent history. Fetch the full repository history and analyze again."));
+    }
     if (skippedMergeCount > 0) {
       warnings.add(
           new AnalysisWarning(
-              "MERGE_DIFFS_EXCLUDED",
+              AnalysisWarningCode.MERGE_DIFFS_EXCLUDED,
+              skippedMergeCount,
               skippedMergeCount
                   + " merge commit diff(s) were excluded to avoid double-counting changes; reachable ordinary commits were analyzed individually."));
     }
     if (dateExcludedCommitCount > 0) {
       warnings.add(
           new AnalysisWarning(
-              "DATE_RANGE_APPLIED",
+              AnalysisWarningCode.DATE_RANGE_APPLIED,
+              dateExcludedCommitCount,
               dateExcludedCommitCount
                   + " ordinary commit(s) outside the requested date range were traversed for file identity but excluded from metrics."));
     }
     if (pathExcludedFileChangeCount > 0) {
       warnings.add(
           new AnalysisWarning(
-              "PATHS_EXCLUDED",
+              AnalysisWarningCode.PATHS_EXCLUDED,
+              pathExcludedFileChangeCount,
               pathExcludedFileChangeCount
                   + " in-range file change(s) matched the configured Git-path exclusions and were omitted from metrics."));
     }

@@ -7,7 +7,12 @@ import dev.riskexplorer.demo.DemoRepositoryGenerator;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -67,7 +72,8 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
 
     assertThat(analysis.warnings())
         .extracting(AnalysisWarning::code)
-        .containsExactly("MERGE_DIFFS_EXCLUDED", "PATHS_EXCLUDED");
+        .containsExactly(
+            AnalysisWarningCode.MERGE_DIFFS_EXCLUDED, AnalysisWarningCode.PATHS_EXCLUDED);
   }
 
   @Test
@@ -103,7 +109,47 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
     assertThat(analysis.scope().pathExcludedFileChangeCount()).isZero();
     assertThat(analysis.warnings())
         .extracting(AnalysisWarning::code)
-        .containsExactly("MERGE_DIFFS_EXCLUDED", "DATE_RANGE_APPLIED");
+        .containsExactly(
+            AnalysisWarningCode.MERGE_DIFFS_EXCLUDED, AnalysisWarningCode.DATE_RANGE_APPLIED);
+  }
+
+  @Test
+  void reportsShallowHistoryAndOmitsTheUnreliableBoundaryDiff() throws Exception {
+    Path repositoryPath = temporaryDirectory.resolve("shallow-repository");
+    DemoRepositoryGenerator.generate(repositoryPath);
+
+    try (Git git = Git.open(repositoryPath.toFile());
+        RevWalk walk = new RevWalk(git.getRepository())) {
+      ObjectId headId = git.getRepository().resolve(Constants.HEAD);
+      RevCommit head = walk.parseCommit(headId);
+      ObjectId shallowBoundary = head.getParent(0).getId();
+      git.getRepository().getObjectDatabase().setShallowCommits(Set.of(shallowBoundary));
+    }
+
+    RepositoryAnalysis analysis =
+        new GitChangeFrequencyAnalyzer()
+            .analyze(new AnalysisRequest(repositoryPath.toString(), "main"));
+
+    assertThat(analysis.traversedCommitCount()).isEqualTo(2);
+    assertThat(analysis.analyzedCommitCount()).isEqualTo(1);
+    assertThat(analysis.hotspots())
+        .singleElement()
+        .satisfies(
+            hotspot -> {
+              assertThat(hotspot.path()).isEqualTo("src/HighChurn.java");
+              assertThat(hotspot.commitCount()).isEqualTo(1);
+            });
+    assertThat(analysis.warnings())
+        .singleElement()
+        .satisfies(
+            warning -> {
+              assertThat(warning.code()).isEqualTo(AnalysisWarningCode.SHALLOW_HISTORY);
+              assertThat(warning.category()).isEqualTo(AnalysisWarningCategory.DATA_QUALITY);
+              assertThat(warning.severity()).isEqualTo(AnalysisWarningSeverity.WARNING);
+              assertThat(warning.occurrenceCount()).isEqualTo(1);
+              assertThat(warning.message())
+                  .contains("available parent history", "Fetch the full repository history");
+            });
   }
 
   @Test

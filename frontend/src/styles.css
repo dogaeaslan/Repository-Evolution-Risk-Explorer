@@ -383,8 +383,28 @@ h2 {
   color: #654b17;
 }
 
-.warning-panel p {
+.warning-stack {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.warning-stack .warning-panel {
   margin-bottom: 0;
+}
+
+.data-quality-panel {
+  border-color: #d8a89d;
+  background: #fff0eb;
+  color: #762f22;
+}
+
+.warning-panel ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.warning-panel li {
   line-height: 1.5;
 }
 
