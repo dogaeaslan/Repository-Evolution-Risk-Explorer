@@ -483,6 +483,15 @@ tbody tr:last-child td {
   text-transform: uppercase;
 }
 
+.tag + .tag {
+  margin-left: 4px;
+}
+
+.limitation-tag {
+  background: #fff0eb;
+  color: #762f22;
+}
+
 .frequency {
   display: inline-grid;
   min-width: 38px;

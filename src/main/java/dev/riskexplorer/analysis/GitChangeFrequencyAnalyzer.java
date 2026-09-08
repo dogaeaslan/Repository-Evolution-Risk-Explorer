@@ -3,6 +3,7 @@ package dev.riskexplorer.analysis;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -17,6 +18,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.diff.RawText;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -125,11 +127,13 @@ public class GitChangeFrequencyAnalyzer {
         AbstractTreeIterator newTree = treeIterator(reader, commit.getTree());
         for (DiffEntry entry : formatter.scan(oldTree, newTree)) {
           pathExcludedFileChangeCount +=
-              recordChange(entry, commit.getName(), evidence, exclusions, activeFiles, allFiles);
+              recordChange(
+                  reader, entry, commit.getName(), evidence, exclusions, activeFiles, allFiles);
         }
       }
     }
 
+    int binaryChangeCount = allFiles.stream().mapToInt(FileAccumulator::binaryChangeCount).sum();
     List<AnalysisWarning> warnings = new ArrayList<>();
     if (shallowBoundaryCount > 0) {
       warnings.add(
@@ -139,6 +143,14 @@ public class GitChangeFrequencyAnalyzer {
               "History for the selected branch stops at "
                   + shallowBoundaryCount
                   + " shallow boundary commit(s). Results include only changes with available parent history. Fetch the full repository history and analyze again."));
+    }
+    if (binaryChangeCount > 0) {
+      warnings.add(
+          new AnalysisWarning(
+              AnalysisWarningCode.BINARY_CONTENT,
+              binaryChangeCount,
+              binaryChangeCount
+                  + " in-scope binary file change(s) were included in change frequency. Line additions, deletions, and churn are unavailable for those changes."));
     }
     if (skippedMergeCount > 0) {
       warnings.add(
@@ -195,36 +207,58 @@ public class GitChangeFrequencyAnalyzer {
   }
 
   private static int recordChange(
+      ObjectReader reader,
       DiffEntry entry,
       String commitId,
       CommitEvidence evidence,
       GitPathExclusions exclusions,
       Map<String, FileAccumulator> activeFiles,
-      List<FileAccumulator> allFiles) {
+      List<FileAccumulator> allFiles)
+      throws IOException {
     boolean pathExcluded = evidence != null && exclusions.matches(eligibilityPath(entry));
     CommitEvidence eligibleEvidence = pathExcluded ? null : evidence;
+    boolean binaryChange = eligibleEvidence != null && isBinaryChange(reader, entry);
     switch (entry.getChangeType()) {
       case ADD ->
-          newFile(entry.getNewPath(), commitId, activeFiles, allFiles).record(eligibleEvidence);
+          newFile(entry.getNewPath(), commitId, activeFiles, allFiles)
+              .record(eligibleEvidence, binaryChange);
       case COPY ->
-          newFile(entry.getNewPath(), commitId, activeFiles, allFiles).record(eligibleEvidence);
+          newFile(entry.getNewPath(), commitId, activeFiles, allFiles)
+              .record(eligibleEvidence, binaryChange);
       case MODIFY ->
-          currentFile(entry.getNewPath(), commitId, activeFiles, allFiles).record(eligibleEvidence);
+          currentFile(entry.getNewPath(), commitId, activeFiles, allFiles)
+              .record(eligibleEvidence, binaryChange);
       case DELETE -> {
         FileAccumulator deleted = currentFile(entry.getOldPath(), commitId, activeFiles, allFiles);
-        deleted.record(eligibleEvidence);
+        deleted.record(eligibleEvidence, binaryChange);
         deleted.markDeleted();
         activeFiles.remove(entry.getOldPath());
       }
       case RENAME -> {
         FileAccumulator renamed = currentFile(entry.getOldPath(), commitId, activeFiles, allFiles);
-        renamed.record(eligibleEvidence);
+        renamed.record(eligibleEvidence, binaryChange);
         activeFiles.remove(entry.getOldPath());
         renamed.renameTo(entry.getNewPath());
         activeFiles.put(entry.getNewPath(), renamed);
       }
     }
     return pathExcluded ? 1 : 0;
+  }
+
+  private static boolean isBinaryChange(ObjectReader reader, DiffEntry entry) throws IOException {
+    return isBinaryBlob(reader, entry, DiffEntry.Side.OLD)
+        || isBinaryBlob(reader, entry, DiffEntry.Side.NEW);
+  }
+
+  private static boolean isBinaryBlob(ObjectReader reader, DiffEntry entry, DiffEntry.Side side)
+      throws IOException {
+    if (entry.getMode(side).getObjectType() != Constants.OBJ_BLOB) {
+      return false;
+    }
+    try (InputStream content =
+        reader.open(entry.getId(side).toObjectId(), Constants.OBJ_BLOB).openStream()) {
+      return RawText.isBinary(content);
+    }
   }
 
   private static String eligibilityPath(DiffEntry entry) {
@@ -329,6 +363,7 @@ public class GitChangeFrequencyAnalyzer {
     private final List<String> historicalPaths = new ArrayList<>();
     private final List<CommitEvidence> commits = new ArrayList<>();
     private final Set<String> recordedCommitIds = new LinkedHashSet<>();
+    private final Set<String> binaryCommitIds = new LinkedHashSet<>();
     private String currentPath;
     private boolean deleted;
 
@@ -339,10 +374,19 @@ public class GitChangeFrequencyAnalyzer {
       historicalPaths.add(initialPath);
     }
 
-    private void record(CommitEvidence evidence) {
-      if (evidence != null && recordedCommitIds.add(evidence.commitId())) {
-        commits.add(evidence);
+    private void record(CommitEvidence evidence, boolean binaryChange) {
+      if (evidence != null) {
+        if (recordedCommitIds.add(evidence.commitId())) {
+          commits.add(evidence);
+        }
+        if (binaryChange) {
+          binaryCommitIds.add(evidence.commitId());
+        }
       }
+    }
+
+    private int binaryChangeCount() {
+      return binaryCommitIds.size();
     }
 
     private void renameTo(String newPath) {
@@ -366,7 +410,14 @@ public class GitChangeFrequencyAnalyzer {
                       .thenComparing(CommitEvidence::commitId))
               .toList();
       return new FileChangeFrequency(
-          fileIdentity, currentPath, historicalPaths, deleted, newestFirst.size(), newestFirst);
+          fileIdentity,
+          currentPath,
+          historicalPaths,
+          deleted,
+          newestFirst.size(),
+          binaryChangeCount(),
+          LineMetricAvailability.fromChangeCounts(newestFirst.size(), binaryChangeCount()),
+          newestFirst);
     }
   }
 }

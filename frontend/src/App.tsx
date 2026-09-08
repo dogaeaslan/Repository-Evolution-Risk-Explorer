@@ -13,11 +13,17 @@ type FileChangeFrequency = {
   historicalPaths: string[];
   deleted: boolean;
   commitCount: number;
+  binaryChangeCount: number;
+  lineMetricAvailability: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE";
   commits: CommitEvidence[];
 };
 
 type AnalysisWarningCode =
-  "MERGE_DIFFS_EXCLUDED" | "DATE_RANGE_APPLIED" | "PATHS_EXCLUDED" | "SHALLOW_HISTORY";
+  | "MERGE_DIFFS_EXCLUDED"
+  | "DATE_RANGE_APPLIED"
+  | "PATHS_EXCLUDED"
+  | "SHALLOW_HISTORY"
+  | "BINARY_CONTENT";
 
 type AnalysisWarning = {
   code: AnalysisWarningCode;
@@ -388,6 +394,16 @@ function AnalysisResults({ analysis }: { analysis: RepositoryAnalysis }) {
                   <td className="file-cell">
                     <strong>{hotspot.path}</strong>
                     {hotspot.deleted && <span className="tag">Deleted</span>}
+                    {hotspot.lineMetricAvailability !== "AVAILABLE" && (
+                      <span className="tag limitation-tag">
+                        {hotspot.lineMetricAvailability === "PARTIAL"
+                          ? "Line metrics partial"
+                          : "Line metrics unavailable"}
+                        {` · ${hotspot.binaryChangeCount} binary ${
+                          hotspot.binaryChangeCount === 1 ? "change" : "changes"
+                        }`}
+                      </span>
+                    )}
                     {hotspot.historicalPaths.length > 1 && (
                       <small>
                         Previously{" "}

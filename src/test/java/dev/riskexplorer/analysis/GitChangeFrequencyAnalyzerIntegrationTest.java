@@ -4,13 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.riskexplorer.demo.DemoRepositoryGenerator;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.jupiter.api.Test;
@@ -44,6 +47,13 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
     assertThat(analysis.hotspots())
         .extracting(FileChangeFrequency::path)
         .doesNotContain("generated/ApiClient.java");
+    assertThat(analysis.hotspots())
+        .allSatisfy(
+            hotspot -> {
+              assertThat(hotspot.binaryChangeCount()).isZero();
+              assertThat(hotspot.lineMetricAvailability())
+                  .isEqualTo(LineMetricAvailability.AVAILABLE);
+            });
     assertThat(analysis.scope().exclusionPatterns()).containsExactly("generated/**");
     assertThat(analysis.scope().dateExcludedCommitCount()).isZero();
     assertThat(analysis.scope().pathExcludedFileChangeCount()).isEqualTo(1);
@@ -153,6 +163,64 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
   }
 
   @Test
+  void reportsBinaryChangesWhilePreservingFrequencyEvidence() throws Exception {
+    Path repositoryPath = temporaryDirectory.resolve("binary-repository");
+    DemoRepositoryGenerator.generate(repositoryPath);
+
+    Path assets = repositoryPath.resolve("assets");
+    Files.createDirectories(assets);
+    Files.write(assets.resolve("logo.bin"), new byte[] {0, 1, 2, 3});
+    Files.writeString(assets.resolve("mixed.dat"), "text version\n");
+    try (Git git = Git.open(repositoryPath.toFile())) {
+      git.add().addFilepattern("assets/logo.bin").addFilepattern("assets/mixed.dat").call();
+      commit(git, "Add binary and text assets", "2025-01-15T09:00:00Z");
+
+      Files.write(assets.resolve("logo.bin"), new byte[] {0, 4, 5, 6});
+      Files.write(assets.resolve("mixed.dat"), new byte[] {0, 7, 8, 9});
+      git.add().addFilepattern("assets/logo.bin").addFilepattern("assets/mixed.dat").call();
+      commit(git, "Update asset content", "2025-01-16T09:00:00Z");
+    }
+
+    GitChangeFrequencyAnalyzer analyzer = new GitChangeFrequencyAnalyzer();
+    RepositoryAnalysis analysis =
+        analyzer.analyze(new AnalysisRequest(repositoryPath.toString(), "main"));
+
+    FileChangeFrequency binary = file(analysis, "assets/logo.bin");
+    assertThat(binary.commitCount()).isEqualTo(2);
+    assertThat(binary.binaryChangeCount()).isEqualTo(2);
+    assertThat(binary.lineMetricAvailability()).isEqualTo(LineMetricAvailability.UNAVAILABLE);
+    assertThat(binary.commits()).hasSize(2);
+
+    FileChangeFrequency mixed = file(analysis, "assets/mixed.dat");
+    assertThat(mixed.commitCount()).isEqualTo(2);
+    assertThat(mixed.binaryChangeCount()).isEqualTo(1);
+    assertThat(mixed.lineMetricAvailability()).isEqualTo(LineMetricAvailability.PARTIAL);
+
+    assertThat(analysis.warnings())
+        .filteredOn(warning -> warning.code() == AnalysisWarningCode.BINARY_CONTENT)
+        .singleElement()
+        .satisfies(
+            warning -> {
+              assertThat(warning.category()).isEqualTo(AnalysisWarningCategory.DATA_QUALITY);
+              assertThat(warning.severity()).isEqualTo(AnalysisWarningSeverity.WARNING);
+              assertThat(warning.occurrenceCount()).isEqualTo(3);
+              assertThat(warning.message())
+                  .contains("included in change frequency", "churn are unavailable");
+            });
+
+    RepositoryAnalysis excludedBinaryChanges =
+        analyzer.analyze(
+            new AnalysisRequest(
+                repositoryPath.toString(), "main", null, null, List.of("assets/**")));
+    assertThat(excludedBinaryChanges.hotspots())
+        .extracting(FileChangeFrequency::path)
+        .doesNotContain("assets/logo.bin", "assets/mixed.dat");
+    assertThat(excludedBinaryChanges.warnings())
+        .extracting(AnalysisWarning::code)
+        .doesNotContain(AnalysisWarningCode.BINARY_CONTENT);
+  }
+
+  @Test
   void acceptsPortableConfigurableExclusionsAndAllowsTheDefaultsToBeDisabled() throws Exception {
     Path repositoryPath = temporaryDirectory.resolve("custom-exclusions-repository");
     DemoRepositoryGenerator.generate(repositoryPath);
@@ -209,5 +277,19 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
     }
 
     assertThat(secondHead).isEqualTo(firstHead);
+  }
+
+  private static FileChangeFrequency file(RepositoryAnalysis analysis, String path) {
+    return analysis.hotspots().stream()
+        .filter(hotspot -> hotspot.path().equals(path))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private static void commit(Git git, String message, String timestamp) throws Exception {
+    PersonIdent identity =
+        new PersonIdent(
+            "Binary Test", "binary@example.test", Instant.parse(timestamp), ZoneOffset.UTC);
+    git.commit().setMessage(message).setAuthor(identity).setCommitter(identity).call();
   }
 }

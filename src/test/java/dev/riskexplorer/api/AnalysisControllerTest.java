@@ -19,6 +19,7 @@ import dev.riskexplorer.analysis.AnalysisWarning;
 import dev.riskexplorer.analysis.AnalysisWarningCode;
 import dev.riskexplorer.analysis.CommitEvidence;
 import dev.riskexplorer.analysis.FileChangeFrequency;
+import dev.riskexplorer.analysis.LineMetricAvailability;
 import dev.riskexplorer.analysis.MergePolicy;
 import dev.riskexplorer.analysis.RepositoryAnalysis;
 import java.time.Instant;
@@ -63,11 +64,15 @@ class AnalysisControllerTest {
         .andExpect(jsonPath("$.branch").value("main"))
         .andExpect(jsonPath("$.scope.mergePolicy").value("EXCLUDE_MERGE_DIFFS"))
         .andExpect(jsonPath("$.hotspots[0].path").value("src/HighChurn.java"))
+        .andExpect(jsonPath("$.hotspots[0].binaryChangeCount").value(1))
+        .andExpect(jsonPath("$.hotspots[0].lineMetricAvailability").value("UNAVAILABLE"))
         .andExpect(jsonPath("$.hotspots[0].commits[0].commitId").value("abc123"))
         .andExpect(jsonPath("$.warnings[0].code").value("SHALLOW_HISTORY"))
         .andExpect(jsonPath("$.warnings[0].category").value("DATA_QUALITY"))
         .andExpect(jsonPath("$.warnings[0].severity").value("WARNING"))
-        .andExpect(jsonPath("$.warnings[0].occurrenceCount").value(1));
+        .andExpect(jsonPath("$.warnings[0].occurrenceCount").value(1))
+        .andExpect(jsonPath("$.warnings[1].code").value("BINARY_CONTENT"))
+        .andExpect(jsonPath("$.warnings[1].occurrenceCount").value(1));
 
     ArgumentCaptor<AnalysisRequest> requestCaptor = ArgumentCaptor.forClass(AnalysisRequest.class);
     verify(analysisService).analyze(requestCaptor.capture());
@@ -88,7 +93,8 @@ class AnalysisControllerTest {
                     "attachment; filename=\"repository-analysis-analysis-1.json\""))
         .andExpect(jsonPath("$.analysisId").value("analysis-1"))
         .andExpect(jsonPath("$.warnings[0].code").value("SHALLOW_HISTORY"))
-        .andExpect(jsonPath("$.warnings[0].category").value("DATA_QUALITY"));
+        .andExpect(jsonPath("$.warnings[0].category").value("DATA_QUALITY"))
+        .andExpect(jsonPath("$.warnings[1].code").value("BINARY_CONTENT"));
   }
 
   @Test
@@ -117,6 +123,8 @@ class AnalysisControllerTest {
             List.of("src/HighChurn.java"),
             false,
             1,
+            1,
+            LineMetricAvailability.UNAVAILABLE,
             List.of(evidence));
     return new RepositoryAnalysis(
         "analysis-1",
@@ -133,6 +141,10 @@ class AnalysisControllerTest {
             new AnalysisWarning(
                 AnalysisWarningCode.SHALLOW_HISTORY,
                 1,
-                "History for the selected branch is incomplete.")));
+                "History for the selected branch is incomplete."),
+            new AnalysisWarning(
+                AnalysisWarningCode.BINARY_CONTENT,
+                1,
+                "One binary change has unavailable line metrics.")));
   }
 }

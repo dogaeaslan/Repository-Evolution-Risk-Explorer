@@ -26,6 +26,8 @@ const completedAnalysis = {
       historicalPaths: ["src/HighChurn.java"],
       deleted: false,
       commitCount: 6,
+      binaryChangeCount: 1,
+      lineMetricAvailability: "PARTIAL",
       commits: [
         {
           commitId: "1234567890abcdef",
@@ -43,6 +45,14 @@ const completedAnalysis = {
       severity: "INFO",
       occurrenceCount: 1,
       message: "1 merge commit diff was excluded.",
+    },
+    {
+      code: "BINARY_CONTENT",
+      category: "DATA_QUALITY",
+      severity: "WARNING",
+      occurrenceCount: 1,
+      message:
+        "1 in-scope binary file change was included in frequency; line metrics are unavailable for that change.",
     },
     {
       code: "SHALLOW_HISTORY",
@@ -95,6 +105,14 @@ describe("App", () => {
     expect(screen.getByText("src/HighChurn.java")).toBeInTheDocument();
     expect(screen.getByText("6")).toBeInTheDocument();
     expect(screen.getByText("1 merge commit diff was excluded.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Line metrics partial · 1 binary change"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "1 in-scope binary file change was included in frequency; line metrics are unavailable for that change.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Data quality and limitations")).toBeInTheDocument();
     expect(
       screen.getByText(
