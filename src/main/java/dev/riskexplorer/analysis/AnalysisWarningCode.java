@@ -5,7 +5,8 @@ public enum AnalysisWarningCode {
   DATE_RANGE_APPLIED(AnalysisWarningCategory.POLICY, AnalysisWarningSeverity.INFO),
   PATHS_EXCLUDED(AnalysisWarningCategory.POLICY, AnalysisWarningSeverity.INFO),
   SHALLOW_HISTORY(AnalysisWarningCategory.DATA_QUALITY, AnalysisWarningSeverity.WARNING),
-  BINARY_CONTENT(AnalysisWarningCategory.DATA_QUALITY, AnalysisWarningSeverity.WARNING);
+  BINARY_CONTENT(AnalysisWarningCategory.DATA_QUALITY, AnalysisWarningSeverity.WARNING),
+  DELETED_FILES_AT_BRANCH_TIP(AnalysisWarningCategory.DATA_QUALITY, AnalysisWarningSeverity.INFO);
 
   private final AnalysisWarningCategory category;
   private final AnalysisWarningSeverity severity;

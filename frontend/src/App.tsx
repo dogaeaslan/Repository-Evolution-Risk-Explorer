@@ -23,7 +23,8 @@ type AnalysisWarningCode =
   | "DATE_RANGE_APPLIED"
   | "PATHS_EXCLUDED"
   | "SHALLOW_HISTORY"
-  | "BINARY_CONTENT";
+  | "BINARY_CONTENT"
+  | "DELETED_FILES_AT_BRANCH_TIP";
 
 type AnalysisWarning = {
   code: AnalysisWarningCode;
@@ -393,7 +394,14 @@ function AnalysisResults({ analysis }: { analysis: RepositoryAnalysis }) {
                   <td className="rank">{String(index + 1).padStart(2, "0")}</td>
                   <td className="file-cell">
                     <strong>{hotspot.path}</strong>
-                    {hotspot.deleted && <span className="tag">Deleted</span>}
+                    {hotspot.deleted && (
+                      <span
+                        className="tag deleted-tag"
+                        title="This file identity is absent at the selected branch tip; its historical evidence remains available."
+                      >
+                        Deleted at branch tip
+                      </span>
+                    )}
                     {hotspot.lineMetricAvailability !== "AVAILABLE" && (
                       <span className="tag limitation-tag">
                         {hotspot.lineMetricAvailability === "PARTIAL"

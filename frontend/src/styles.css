@@ -492,6 +492,11 @@ tbody tr:last-child td {
   color: #762f22;
 }
 
+.deleted-tag {
+  background: #ece6df;
+  color: #624d39;
+}
+
 .frequency {
   display: inline-grid;
   min-width: 38px;

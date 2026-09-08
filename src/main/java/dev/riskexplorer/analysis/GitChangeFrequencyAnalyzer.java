@@ -133,7 +133,19 @@ public class GitChangeFrequencyAnalyzer {
       }
     }
 
-    int binaryChangeCount = allFiles.stream().mapToInt(FileAccumulator::binaryChangeCount).sum();
+    List<FileChangeFrequency> hotspots =
+        allFiles.stream()
+            .map(FileAccumulator::toObservation)
+            .filter(observation -> observation.commitCount() > 0)
+            .sorted(
+                Comparator.comparingInt(FileChangeFrequency::commitCount)
+                    .reversed()
+                    .thenComparing(FileChangeFrequency::path))
+            .toList();
+    int binaryChangeCount =
+        hotspots.stream().mapToInt(FileChangeFrequency::binaryChangeCount).sum();
+    int deletedFileCount =
+        Math.toIntExact(hotspots.stream().filter(FileChangeFrequency::deleted).count());
     List<AnalysisWarning> warnings = new ArrayList<>();
     if (shallowBoundaryCount > 0) {
       warnings.add(
@@ -151,6 +163,13 @@ public class GitChangeFrequencyAnalyzer {
               binaryChangeCount,
               binaryChangeCount
                   + " in-scope binary file change(s) were included in change frequency. Line additions, deletions, and churn are unavailable for those changes."));
+    }
+    if (deletedFileCount > 0) {
+      warnings.add(
+          new AnalysisWarning(
+              AnalysisWarningCode.DELETED_FILES_AT_BRANCH_TIP,
+              deletedFileCount,
+              deletedFilesMessage(deletedFileCount)));
     }
     if (skippedMergeCount > 0) {
       warnings.add(
@@ -177,16 +196,6 @@ public class GitChangeFrequencyAnalyzer {
                   + " in-range file change(s) matched the configured Git-path exclusions and were omitted from metrics."));
     }
 
-    List<FileChangeFrequency> hotspots =
-        allFiles.stream()
-            .map(FileAccumulator::toObservation)
-            .filter(observation -> observation.commitCount() > 0)
-            .sorted(
-                Comparator.comparingInt(FileChangeFrequency::commitCount)
-                    .reversed()
-                    .thenComparing(FileChangeFrequency::path))
-            .toList();
-
     return new RepositoryAnalysis(
         UUID.randomUUID().toString(),
         repository.getWorkTree().toPath().toRealPath().toString(),
@@ -204,6 +213,18 @@ public class GitChangeFrequencyAnalyzer {
             pathExcludedFileChangeCount),
         hotspots,
         warnings);
+  }
+
+  private static String deletedFilesMessage(int deletedFileCount) {
+    String subject =
+        deletedFileCount == 1
+            ? "1 analyzed file identity is"
+            : deletedFileCount + " analyzed file identities are";
+    String possessive = deletedFileCount == 1 ? "Its" : "Their";
+    return subject
+        + " absent at the selected branch tip. "
+        + possessive
+        + " historical metrics remain valid, but metrics requiring current file content are unavailable.";
   }
 
   private static int recordChange(

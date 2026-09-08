@@ -24,7 +24,7 @@ const completedAnalysis = {
       fileIdentity: "file-1",
       path: "src/HighChurn.java",
       historicalPaths: ["src/HighChurn.java"],
-      deleted: false,
+      deleted: true,
       commitCount: 6,
       binaryChangeCount: 1,
       lineMetricAvailability: "PARTIAL",
@@ -40,11 +40,12 @@ const completedAnalysis = {
   ],
   warnings: [
     {
-      code: "MERGE_DIFFS_EXCLUDED",
-      category: "POLICY",
-      severity: "INFO",
+      code: "SHALLOW_HISTORY",
+      category: "DATA_QUALITY",
+      severity: "WARNING",
       occurrenceCount: 1,
-      message: "1 merge commit diff was excluded.",
+      message:
+        "History is incomplete. Fetch the full repository history and analyze again.",
     },
     {
       code: "BINARY_CONTENT",
@@ -55,12 +56,19 @@ const completedAnalysis = {
         "1 in-scope binary file change was included in frequency; line metrics are unavailable for that change.",
     },
     {
-      code: "SHALLOW_HISTORY",
+      code: "DELETED_FILES_AT_BRANCH_TIP",
       category: "DATA_QUALITY",
-      severity: "WARNING",
+      severity: "INFO",
       occurrenceCount: 1,
       message:
-        "History is incomplete. Fetch the full repository history and analyze again.",
+        "1 analyzed file identity is absent at the selected branch tip. Its historical metrics remain valid, but metrics requiring current file content are unavailable.",
+    },
+    {
+      code: "MERGE_DIFFS_EXCLUDED",
+      category: "POLICY",
+      severity: "INFO",
+      occurrenceCount: 1,
+      message: "1 merge commit diff was excluded.",
     },
   ],
 };
@@ -105,6 +113,10 @@ describe("App", () => {
     expect(screen.getByText("src/HighChurn.java")).toBeInTheDocument();
     expect(screen.getByText("6")).toBeInTheDocument();
     expect(screen.getByText("1 merge commit diff was excluded.")).toBeInTheDocument();
+    expect(screen.getByText("Deleted at branch tip")).toHaveAttribute(
+      "title",
+      "This file identity is absent at the selected branch tip; its historical evidence remains available.",
+    );
     expect(
       screen.getByText("Line metrics partial · 1 binary change"),
     ).toBeInTheDocument();
@@ -119,9 +131,17 @@ describe("App", () => {
         "History is incomplete. Fetch the full repository history and analyze again.",
       ),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "1 analyzed file identity is absent at the selected branch tip. Its historical metrics remain valid, but metrics requiring current file content are unavailable.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("All reachable dates")).toBeInTheDocument();
     expect(screen.getAllByText("generated/**")).toHaveLength(2);
     expect(screen.getByText("hotfix: stabilize parser recovery")).toBeInTheDocument();
+    expect(screen.getByText("Inspect commits").closest("details")).toContainElement(
+      screen.getByText("hotfix: stabilize parser recovery"),
+    );
     expect(screen.getByRole("link", { name: "Export JSON" })).toHaveAttribute(
       "href",
       "/api/analyses/analysis-1/export",

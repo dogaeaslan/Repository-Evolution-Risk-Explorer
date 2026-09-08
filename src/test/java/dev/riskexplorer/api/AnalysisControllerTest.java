@@ -64,6 +64,7 @@ class AnalysisControllerTest {
         .andExpect(jsonPath("$.branch").value("main"))
         .andExpect(jsonPath("$.scope.mergePolicy").value("EXCLUDE_MERGE_DIFFS"))
         .andExpect(jsonPath("$.hotspots[0].path").value("src/HighChurn.java"))
+        .andExpect(jsonPath("$.hotspots[0].deleted").value(true))
         .andExpect(jsonPath("$.hotspots[0].binaryChangeCount").value(1))
         .andExpect(jsonPath("$.hotspots[0].lineMetricAvailability").value("UNAVAILABLE"))
         .andExpect(jsonPath("$.hotspots[0].commits[0].commitId").value("abc123"))
@@ -72,7 +73,11 @@ class AnalysisControllerTest {
         .andExpect(jsonPath("$.warnings[0].severity").value("WARNING"))
         .andExpect(jsonPath("$.warnings[0].occurrenceCount").value(1))
         .andExpect(jsonPath("$.warnings[1].code").value("BINARY_CONTENT"))
-        .andExpect(jsonPath("$.warnings[1].occurrenceCount").value(1));
+        .andExpect(jsonPath("$.warnings[1].occurrenceCount").value(1))
+        .andExpect(jsonPath("$.warnings[2].code").value("DELETED_FILES_AT_BRANCH_TIP"))
+        .andExpect(jsonPath("$.warnings[2].category").value("DATA_QUALITY"))
+        .andExpect(jsonPath("$.warnings[2].severity").value("INFO"))
+        .andExpect(jsonPath("$.warnings[2].occurrenceCount").value(1));
 
     ArgumentCaptor<AnalysisRequest> requestCaptor = ArgumentCaptor.forClass(AnalysisRequest.class);
     verify(analysisService).analyze(requestCaptor.capture());
@@ -92,9 +97,12 @@ class AnalysisControllerTest {
                     "Content-Disposition",
                     "attachment; filename=\"repository-analysis-analysis-1.json\""))
         .andExpect(jsonPath("$.analysisId").value("analysis-1"))
+        .andExpect(jsonPath("$.hotspots[0].deleted").value(true))
         .andExpect(jsonPath("$.warnings[0].code").value("SHALLOW_HISTORY"))
         .andExpect(jsonPath("$.warnings[0].category").value("DATA_QUALITY"))
-        .andExpect(jsonPath("$.warnings[1].code").value("BINARY_CONTENT"));
+        .andExpect(jsonPath("$.warnings[1].code").value("BINARY_CONTENT"))
+        .andExpect(jsonPath("$.warnings[2].code").value("DELETED_FILES_AT_BRANCH_TIP"))
+        .andExpect(jsonPath("$.warnings[2].occurrenceCount").value(1));
   }
 
   @Test
@@ -121,7 +129,7 @@ class AnalysisControllerTest {
             "file-1",
             "src/HighChurn.java",
             List.of("src/HighChurn.java"),
-            false,
+            true,
             1,
             1,
             LineMetricAvailability.UNAVAILABLE,
@@ -145,6 +153,10 @@ class AnalysisControllerTest {
             new AnalysisWarning(
                 AnalysisWarningCode.BINARY_CONTENT,
                 1,
-                "One binary change has unavailable line metrics.")));
+                "One binary change has unavailable line metrics."),
+            new AnalysisWarning(
+                AnalysisWarningCode.DELETED_FILES_AT_BRANCH_TIP,
+                1,
+                "One analyzed file identity is absent at the selected branch tip.")));
   }
 }

@@ -221,6 +221,110 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
   }
 
   @Test
+  void preservesRenameAndDeletionEvidenceWhenAPathIsLaterRecreated() throws Exception {
+    Path repositoryPath = temporaryDirectory.resolve("deleted-repository");
+    generateDeletionHistory(repositoryPath);
+
+    RepositoryAnalysis analysis =
+        new GitChangeFrequencyAnalyzer()
+            .analyze(new AnalysisRequest(repositoryPath.toString(), "main"));
+
+    List<FileChangeFrequency> identitiesAtCurrentPath =
+        analysis.hotspots().stream()
+            .filter(hotspot -> hotspot.path().equals("src/Current.java"))
+            .toList();
+    assertThat(identitiesAtCurrentPath).hasSize(2);
+
+    FileChangeFrequency deletedIdentity =
+        identitiesAtCurrentPath.stream()
+            .filter(FileChangeFrequency::deleted)
+            .findFirst()
+            .orElseThrow();
+    FileChangeFrequency activeReplacement =
+        identitiesAtCurrentPath.stream()
+            .filter(hotspot -> !hotspot.deleted())
+            .findFirst()
+            .orElseThrow();
+
+    assertThat(deletedIdentity.historicalPaths())
+        .containsExactly("src/Legacy.java", "src/Current.java");
+    assertThat(deletedIdentity.commitCount()).isEqualTo(5);
+    assertThat(deletedIdentity.commits())
+        .extracting(CommitEvidence::message)
+        .contains("Delete current component");
+    assertThat(deletedIdentity.lineMetricAvailability())
+        .isEqualTo(LineMetricAvailability.AVAILABLE);
+    assertThat(activeReplacement.historicalPaths()).containsExactly("src/Current.java");
+    assertThat(activeReplacement.commitCount()).isEqualTo(1);
+    assertThat(activeReplacement.fileIdentity()).isNotEqualTo(deletedIdentity.fileIdentity());
+
+    assertThat(analysis.warnings())
+        .singleElement()
+        .satisfies(
+            warning -> {
+              assertThat(warning.code()).isEqualTo(AnalysisWarningCode.DELETED_FILES_AT_BRANCH_TIP);
+              assertThat(warning.category()).isEqualTo(AnalysisWarningCategory.DATA_QUALITY);
+              assertThat(warning.severity()).isEqualTo(AnalysisWarningSeverity.INFO);
+              assertThat(warning.occurrenceCount()).isEqualTo(1);
+              assertThat(warning.message())
+                  .contains("absent at the selected branch tip", "historical metrics remain valid");
+            });
+  }
+
+  @Test
+  void reportsBranchTipDeletionWhenTheDeletionIsOutsideTheDateRange() throws Exception {
+    Path repositoryPath = temporaryDirectory.resolve("date-filtered-deletion-repository");
+    generateDeletionHistory(repositoryPath);
+
+    RepositoryAnalysis analysis =
+        new GitChangeFrequencyAnalyzer()
+            .analyze(
+                new AnalysisRequest(
+                    repositoryPath.toString(),
+                    "main",
+                    Instant.parse("2025-02-01T00:00:00Z"),
+                    Instant.parse("2025-02-05T00:00:00Z"),
+                    List.of()));
+
+    assertThat(analysis.hotspots())
+        .singleElement()
+        .satisfies(
+            hotspot -> {
+              assertThat(hotspot.path()).isEqualTo("src/Current.java");
+              assertThat(hotspot.deleted()).isTrue();
+              assertThat(hotspot.commitCount()).isEqualTo(4);
+              assertThat(hotspot.commits())
+                  .extracting(CommitEvidence::message)
+                  .doesNotContain("Delete current component", "Recreate current path");
+            });
+    assertThat(analysis.scope().dateExcludedCommitCount()).isEqualTo(2);
+    assertThat(analysis.warnings())
+        .extracting(AnalysisWarning::code)
+        .containsExactly(
+            AnalysisWarningCode.DELETED_FILES_AT_BRANCH_TIP,
+            AnalysisWarningCode.DATE_RANGE_APPLIED);
+  }
+
+  @Test
+  void omitsFullyExcludedDeletedIdentitiesAndTheirDeletionNotice() throws Exception {
+    Path repositoryPath = temporaryDirectory.resolve("excluded-deletion-repository");
+    generateDeletionHistory(repositoryPath);
+
+    RepositoryAnalysis analysis =
+        new GitChangeFrequencyAnalyzer()
+            .analyze(
+                new AnalysisRequest(
+                    repositoryPath.toString(), "main", null, null, List.of("src/**")));
+
+    assertThat(analysis.hotspots()).isEmpty();
+    assertThat(analysis.scope().pathExcludedFileChangeCount()).isEqualTo(6);
+    assertThat(analysis.warnings())
+        .extracting(AnalysisWarning::code)
+        .containsExactly(AnalysisWarningCode.PATHS_EXCLUDED)
+        .doesNotContain(AnalysisWarningCode.DELETED_FILES_AT_BRANCH_TIP);
+  }
+
+  @Test
   void acceptsPortableConfigurableExclusionsAndAllowsTheDefaultsToBeDisabled() throws Exception {
     Path repositoryPath = temporaryDirectory.resolve("custom-exclusions-repository");
     DemoRepositoryGenerator.generate(repositoryPath);
@@ -289,7 +393,45 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
   private static void commit(Git git, String message, String timestamp) throws Exception {
     PersonIdent identity =
         new PersonIdent(
-            "Binary Test", "binary@example.test", Instant.parse(timestamp), ZoneOffset.UTC);
+            "Fixture Author", "fixture@example.test", Instant.parse(timestamp), ZoneOffset.UTC);
     git.commit().setMessage(message).setAuthor(identity).setCommitter(identity).call();
+  }
+
+  private static void generateDeletionHistory(Path repositoryPath) throws Exception {
+    Files.createDirectories(repositoryPath);
+    try (Git git =
+        Git.init().setDirectory(repositoryPath.toFile()).setInitialBranch("main").call()) {
+      write(repositoryPath, "src/Legacy.java", "final class Legacy { int value = 1; }\n");
+      git.add().addFilepattern("src/Legacy.java").call();
+      commit(git, "Add legacy component", "2025-02-01T09:00:00Z");
+
+      write(repositoryPath, "src/Legacy.java", "final class Legacy { int value = 2; }\n");
+      git.add().addFilepattern("src/Legacy.java").call();
+      commit(git, "Update legacy component", "2025-02-02T09:00:00Z");
+
+      String renamedContent = Files.readString(repositoryPath.resolve("src/Legacy.java"));
+      git.rm().addFilepattern("src/Legacy.java").call();
+      write(repositoryPath, "src/Current.java", renamedContent);
+      git.add().addFilepattern("src/Current.java").call();
+      commit(git, "Rename legacy component", "2025-02-03T09:00:00Z");
+
+      write(repositoryPath, "src/Current.java", "final class Current { int value = 3; }\n");
+      git.add().addFilepattern("src/Current.java").call();
+      commit(git, "Update current component", "2025-02-04T09:00:00Z");
+
+      git.rm().addFilepattern("src/Current.java").call();
+      commit(git, "Delete current component", "2025-02-05T09:00:00Z");
+
+      write(repositoryPath, "src/Current.java", "final class Replacement {}\n");
+      git.add().addFilepattern("src/Current.java").call();
+      commit(git, "Recreate current path", "2025-02-06T09:00:00Z");
+    }
+  }
+
+  private static void write(Path repositoryPath, String relativePath, String content)
+      throws Exception {
+    Path file = repositoryPath.resolve(relativePath.replace('/', java.io.File.separatorChar));
+    Files.createDirectories(file.getParent());
+    Files.writeString(file, content);
   }
 }
