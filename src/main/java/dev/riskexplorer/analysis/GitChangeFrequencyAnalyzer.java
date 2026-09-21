@@ -11,7 +11,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +19,7 @@ import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.diff.RawText;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
@@ -144,6 +144,8 @@ public class GitChangeFrequencyAnalyzer {
             .toList();
     int binaryChangeCount =
         hotspots.stream().mapToInt(FileChangeFrequency::binaryChangeCount).sum();
+    int gitlinkChangeCount =
+        hotspots.stream().mapToInt(FileChangeFrequency::gitlinkChangeCount).sum();
     int deletedFileCount =
         Math.toIntExact(hotspots.stream().filter(FileChangeFrequency::deleted).count());
     List<AnalysisWarning> warnings = new ArrayList<>();
@@ -163,6 +165,14 @@ public class GitChangeFrequencyAnalyzer {
               binaryChangeCount,
               binaryChangeCount
                   + " in-scope binary file change(s) were included in change frequency. Line additions, deletions, and churn are unavailable for those changes."));
+    }
+    if (gitlinkChangeCount > 0) {
+      warnings.add(
+          new AnalysisWarning(
+              AnalysisWarningCode.GITLINK_CONTENT,
+              gitlinkChangeCount,
+              gitlinkChangeCount
+                  + " in-scope Gitlink pointer change(s) were included in change frequency. Submodule contents were not traversed; line additions, deletions, and churn are unavailable for those changes."));
     }
     if (deletedFileCount > 0) {
       warnings.add(
@@ -238,32 +248,45 @@ public class GitChangeFrequencyAnalyzer {
       throws IOException {
     boolean pathExcluded = evidence != null && exclusions.matches(eligibilityPath(entry));
     CommitEvidence eligibleEvidence = pathExcluded ? null : evidence;
-    boolean binaryChange = eligibleEvidence != null && isBinaryChange(reader, entry);
+    ChangeContent content =
+        eligibleEvidence == null
+            ? ChangeContent.TEXT
+            : isGitlinkChange(entry)
+                ? ChangeContent.GITLINK
+                : isBinaryChange(reader, entry) ? ChangeContent.BINARY : ChangeContent.TEXT;
     switch (entry.getChangeType()) {
       case ADD ->
           newFile(entry.getNewPath(), commitId, activeFiles, allFiles)
-              .record(eligibleEvidence, binaryChange);
+              .record(eligibleEvidence, content);
       case COPY ->
           newFile(entry.getNewPath(), commitId, activeFiles, allFiles)
-              .record(eligibleEvidence, binaryChange);
+              .record(eligibleEvidence, content);
       case MODIFY ->
           currentFile(entry.getNewPath(), commitId, activeFiles, allFiles)
-              .record(eligibleEvidence, binaryChange);
+              .record(eligibleEvidence, content);
       case DELETE -> {
         FileAccumulator deleted = currentFile(entry.getOldPath(), commitId, activeFiles, allFiles);
-        deleted.record(eligibleEvidence, binaryChange);
+        deleted.record(eligibleEvidence, content);
         deleted.markDeleted();
         activeFiles.remove(entry.getOldPath());
       }
       case RENAME -> {
         FileAccumulator renamed = currentFile(entry.getOldPath(), commitId, activeFiles, allFiles);
-        renamed.record(eligibleEvidence, binaryChange);
+        renamed.record(eligibleEvidence, content);
         activeFiles.remove(entry.getOldPath());
         renamed.renameTo(entry.getNewPath());
         activeFiles.put(entry.getNewPath(), renamed);
       }
     }
     return pathExcluded ? 1 : 0;
+  }
+
+  private static boolean isGitlinkChange(DiffEntry entry) {
+    return isGitlinkSide(entry, DiffEntry.Side.OLD) || isGitlinkSide(entry, DiffEntry.Side.NEW);
+  }
+
+  private static boolean isGitlinkSide(DiffEntry entry, DiffEntry.Side side) {
+    return FileMode.GITLINK.equals(entry.getMode(side).getBits());
   }
 
   private static boolean isBinaryChange(ObjectReader reader, DiffEntry entry) throws IOException {
@@ -378,13 +401,28 @@ public class GitChangeFrequencyAnalyzer {
         && (toExclusive == null || authoredAt.isBefore(toExclusive));
   }
 
+  private enum ChangeContent {
+    TEXT,
+    BINARY,
+    GITLINK;
+
+    private ChangeContent combine(ChangeContent other) {
+      if (this == GITLINK || other == GITLINK) {
+        return GITLINK;
+      }
+      if (this == BINARY || other == BINARY) {
+        return BINARY;
+      }
+      return TEXT;
+    }
+  }
+
   private static final class FileAccumulator {
 
     private final String fileIdentity;
     private final List<String> historicalPaths = new ArrayList<>();
     private final List<CommitEvidence> commits = new ArrayList<>();
-    private final Set<String> recordedCommitIds = new LinkedHashSet<>();
-    private final Set<String> binaryCommitIds = new LinkedHashSet<>();
+    private final Map<String, ChangeContent> contentByCommit = new LinkedHashMap<>();
     private String currentPath;
     private boolean deleted;
 
@@ -395,19 +433,29 @@ public class GitChangeFrequencyAnalyzer {
       historicalPaths.add(initialPath);
     }
 
-    private void record(CommitEvidence evidence, boolean binaryChange) {
+    private void record(CommitEvidence evidence, ChangeContent content) {
       if (evidence != null) {
-        if (recordedCommitIds.add(evidence.commitId())) {
+        ChangeContent previous = contentByCommit.putIfAbsent(evidence.commitId(), content);
+        if (previous == null) {
           commits.add(evidence);
-        }
-        if (binaryChange) {
-          binaryCommitIds.add(evidence.commitId());
+        } else {
+          contentByCommit.put(evidence.commitId(), previous.combine(content));
         }
       }
     }
 
     private int binaryChangeCount() {
-      return binaryCommitIds.size();
+      return Math.toIntExact(
+          contentByCommit.values().stream()
+              .filter(content -> content == ChangeContent.BINARY)
+              .count());
+    }
+
+    private int gitlinkChangeCount() {
+      return Math.toIntExact(
+          contentByCommit.values().stream()
+              .filter(content -> content == ChangeContent.GITLINK)
+              .count());
     }
 
     private void renameTo(String newPath) {
@@ -437,7 +485,10 @@ public class GitChangeFrequencyAnalyzer {
           deleted,
           newestFirst.size(),
           binaryChangeCount(),
-          LineMetricAvailability.fromChangeCounts(newestFirst.size(), binaryChangeCount()),
+          gitlinkChangeCount(),
+          binaryChangeCount() + gitlinkChangeCount(),
+          LineMetricAvailability.fromChangeCounts(
+              newestFirst.size(), binaryChangeCount() + gitlinkChangeCount()),
           newestFirst);
     }
   }

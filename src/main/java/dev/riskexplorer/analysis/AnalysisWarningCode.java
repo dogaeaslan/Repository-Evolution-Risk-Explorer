@@ -6,7 +6,8 @@ public enum AnalysisWarningCode {
   PATHS_EXCLUDED(AnalysisWarningCategory.POLICY, AnalysisWarningSeverity.INFO),
   SHALLOW_HISTORY(AnalysisWarningCategory.DATA_QUALITY, AnalysisWarningSeverity.WARNING),
   BINARY_CONTENT(AnalysisWarningCategory.DATA_QUALITY, AnalysisWarningSeverity.WARNING),
-  DELETED_FILES_AT_BRANCH_TIP(AnalysisWarningCategory.DATA_QUALITY, AnalysisWarningSeverity.INFO);
+  DELETED_FILES_AT_BRANCH_TIP(AnalysisWarningCategory.DATA_QUALITY, AnalysisWarningSeverity.INFO),
+  GITLINK_CONTENT(AnalysisWarningCategory.UNSUPPORTED_CONTENT, AnalysisWarningSeverity.WARNING);
 
   private final AnalysisWarningCategory category;
   private final AnalysisWarningSeverity severity;

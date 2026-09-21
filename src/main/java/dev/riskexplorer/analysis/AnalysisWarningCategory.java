@@ -2,5 +2,6 @@ package dev.riskexplorer.analysis;
 
 public enum AnalysisWarningCategory {
   POLICY,
-  DATA_QUALITY
+  DATA_QUALITY,
+  UNSUPPORTED_CONTENT
 }

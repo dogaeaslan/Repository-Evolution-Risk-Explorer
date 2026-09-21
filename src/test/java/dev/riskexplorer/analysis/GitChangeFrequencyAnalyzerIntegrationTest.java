@@ -11,7 +11,11 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheEditor;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -221,6 +225,156 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
   }
 
   @Test
+  void countsGitlinkPointerAdditionWithoutTreatingItAsBinary() throws Exception {
+    Path repositoryPath = temporaryDirectory.resolve("gitlink-repository");
+    Files.createDirectories(repositoryPath);
+    try (Git git =
+        Git.init().setDirectory(repositoryPath.toFile()).setInitialBranch("main").call()) {
+      write(repositoryPath, "README.md", "Gitlink fixture\n");
+      git.add().addFilepattern("README.md").call();
+      commit(git, "Create containing repository", "2025-03-01T09:00:00Z");
+      ObjectId pointer = git.getRepository().resolve(Constants.HEAD);
+      stageGitlink(git, "vendor/component", pointer);
+      commit(git, "Add submodule pointer", "2025-03-02T09:00:00Z");
+    }
+
+    RepositoryAnalysis analysis =
+        new GitChangeFrequencyAnalyzer()
+            .analyze(new AnalysisRequest(repositoryPath.toString(), "main"));
+
+    FileChangeFrequency gitlink = file(analysis, "vendor/component");
+    assertThat(gitlink.commitCount()).isEqualTo(1);
+    assertThat(gitlink.gitlinkChangeCount()).isEqualTo(1);
+    assertThat(gitlink.binaryChangeCount()).isZero();
+    assertThat(gitlink.unavailableLineMetricChangeCount()).isEqualTo(1);
+    assertThat(gitlink.lineMetricAvailability()).isEqualTo(LineMetricAvailability.UNAVAILABLE);
+    assertThat(gitlink.commits())
+        .extracting(CommitEvidence::message)
+        .containsExactly("Add submodule pointer");
+    assertThat(analysis.warnings())
+        .singleElement()
+        .satisfies(
+            warning -> {
+              assertThat(warning.code()).isEqualTo(AnalysisWarningCode.GITLINK_CONTENT);
+              assertThat(warning.category()).isEqualTo(AnalysisWarningCategory.UNSUPPORTED_CONTENT);
+              assertThat(warning.severity()).isEqualTo(AnalysisWarningSeverity.WARNING);
+              assertThat(warning.occurrenceCount()).isEqualTo(1);
+            });
+  }
+
+  @Test
+  void tracesGitlinkAdditionUpdateAndDeletionAlongsideMixedTextHistory() throws Exception {
+    Path repositoryPath = temporaryDirectory.resolve("gitlink-lifecycle-repository");
+    generateGitlinkLifecycleHistory(repositoryPath);
+
+    RepositoryAnalysis analysis =
+        new GitChangeFrequencyAnalyzer()
+            .analyze(new AnalysisRequest(repositoryPath.toString(), "main", null, null, List.of()));
+
+    assertThat(analysis.traversedCommitCount()).isEqualTo(4);
+    assertThat(analysis.analyzedCommitCount()).isEqualTo(4);
+
+    FileChangeFrequency deletedPointer = file(analysis, "vendor/component");
+    assertThat(deletedPointer.deleted()).isTrue();
+    assertThat(deletedPointer.commitCount()).isEqualTo(3);
+    assertThat(deletedPointer.gitlinkChangeCount()).isEqualTo(3);
+    assertThat(deletedPointer.binaryChangeCount()).isZero();
+    assertThat(deletedPointer.unavailableLineMetricChangeCount()).isEqualTo(3);
+    assertThat(deletedPointer.lineMetricAvailability())
+        .isEqualTo(LineMetricAvailability.UNAVAILABLE);
+    assertThat(deletedPointer.commits())
+        .extracting(CommitEvidence::message)
+        .containsExactly(
+            "Delete submodule pointer", "Update submodule pointer", "Add submodule pointer");
+
+    List<FileChangeFrequency> mixedIdentities =
+        analysis.hotspots().stream()
+            .filter(hotspot -> hotspot.path().equals("vendor/mixed"))
+            .toList();
+    assertThat(mixedIdentities).hasSize(2);
+    FileChangeFrequency formerText =
+        mixedIdentities.stream().filter(FileChangeFrequency::deleted).findFirst().orElseThrow();
+    FileChangeFrequency activeGitlink =
+        mixedIdentities.stream().filter(hotspot -> !hotspot.deleted()).findFirst().orElseThrow();
+    assertThat(formerText.commitCount()).isEqualTo(2);
+    assertThat(formerText.gitlinkChangeCount()).isZero();
+    assertThat(formerText.lineMetricAvailability()).isEqualTo(LineMetricAvailability.AVAILABLE);
+    assertThat(activeGitlink.commitCount()).isEqualTo(2);
+    assertThat(activeGitlink.gitlinkChangeCount()).isEqualTo(2);
+    assertThat(activeGitlink.binaryChangeCount()).isZero();
+    assertThat(activeGitlink.unavailableLineMetricChangeCount()).isEqualTo(2);
+    assertThat(activeGitlink.lineMetricAvailability())
+        .isEqualTo(LineMetricAvailability.UNAVAILABLE);
+    assertThat(activeGitlink.fileIdentity()).isNotEqualTo(formerText.fileIdentity());
+
+    FileChangeFrequency ordinary = file(analysis, "src/Stable.java");
+    assertThat(ordinary.commitCount()).isEqualTo(2);
+    assertThat(ordinary.gitlinkChangeCount()).isZero();
+    assertThat(ordinary.unavailableLineMetricChangeCount()).isZero();
+    assertThat(ordinary.lineMetricAvailability()).isEqualTo(LineMetricAvailability.AVAILABLE);
+
+    assertThat(analysis.warnings())
+        .extracting(AnalysisWarning::code)
+        .containsExactly(
+            AnalysisWarningCode.GITLINK_CONTENT, AnalysisWarningCode.DELETED_FILES_AT_BRANCH_TIP);
+    AnalysisWarning gitlinkWarning = analysis.warnings().getFirst();
+    assertThat(gitlinkWarning.category()).isEqualTo(AnalysisWarningCategory.UNSUPPORTED_CONTENT);
+    assertThat(gitlinkWarning.severity()).isEqualTo(AnalysisWarningSeverity.WARNING);
+    assertThat(gitlinkWarning.occurrenceCount()).isEqualTo(5);
+    assertThat(gitlinkWarning.message())
+        .contains("included in change frequency", "Submodule contents were not traversed");
+    assertThat(analysis.warnings().get(1).occurrenceCount()).isEqualTo(2);
+  }
+
+  @Test
+  void appliesDateAndPathScopeBeforeReportingGitlinkLimitations() throws Exception {
+    Path repositoryPath = temporaryDirectory.resolve("scoped-gitlink-repository");
+    generateGitlinkLifecycleHistory(repositoryPath);
+    GitChangeFrequencyAnalyzer analyzer = new GitChangeFrequencyAnalyzer();
+
+    RepositoryAnalysis dateFiltered =
+        analyzer.analyze(
+            new AnalysisRequest(
+                repositoryPath.toString(),
+                "main",
+                Instant.parse("2025-03-03T00:00:00Z"),
+                null,
+                List.of()));
+    assertThat(dateFiltered.traversedCommitCount()).isEqualTo(4);
+    assertThat(dateFiltered.analyzedCommitCount()).isEqualTo(2);
+    assertThat(dateFiltered.scope().dateExcludedCommitCount()).isEqualTo(2);
+    FileChangeFrequency filteredPointer = file(dateFiltered, "vendor/component");
+    assertThat(filteredPointer.deleted()).isTrue();
+    assertThat(filteredPointer.commitCount()).isEqualTo(2);
+    assertThat(filteredPointer.gitlinkChangeCount()).isEqualTo(2);
+    FileChangeFrequency filteredMixed = file(dateFiltered, "vendor/mixed");
+    assertThat(filteredMixed.commitCount()).isEqualTo(2);
+    assertThat(filteredMixed.gitlinkChangeCount()).isEqualTo(2);
+    assertThat(filteredMixed.lineMetricAvailability())
+        .isEqualTo(LineMetricAvailability.UNAVAILABLE);
+    assertThat(dateFiltered.warnings())
+        .extracting(AnalysisWarning::code)
+        .containsExactly(
+            AnalysisWarningCode.GITLINK_CONTENT,
+            AnalysisWarningCode.DELETED_FILES_AT_BRANCH_TIP,
+            AnalysisWarningCode.DATE_RANGE_APPLIED);
+    assertThat(dateFiltered.warnings().getFirst().occurrenceCount()).isEqualTo(4);
+    assertThat(dateFiltered.warnings().get(1).occurrenceCount()).isEqualTo(2);
+
+    RepositoryAnalysis excluded =
+        analyzer.analyze(
+            new AnalysisRequest(
+                repositoryPath.toString(), "main", null, null, List.of("vendor/**")));
+    assertThat(excluded.hotspots())
+        .extracting(FileChangeFrequency::path)
+        .containsExactly("src/Stable.java", "README.md");
+    assertThat(excluded.scope().pathExcludedFileChangeCount()).isEqualTo(7);
+    assertThat(excluded.warnings())
+        .extracting(AnalysisWarning::code)
+        .containsExactly(AnalysisWarningCode.PATHS_EXCLUDED);
+  }
+
+  @Test
   void preservesRenameAndDeletionEvidenceWhenAPathIsLaterRecreated() throws Exception {
     Path repositoryPath = temporaryDirectory.resolve("deleted-repository");
     generateDeletionHistory(repositoryPath);
@@ -395,6 +549,63 @@ class GitChangeFrequencyAnalyzerIntegrationTest {
         new PersonIdent(
             "Fixture Author", "fixture@example.test", Instant.parse(timestamp), ZoneOffset.UTC);
     git.commit().setMessage(message).setAuthor(identity).setCommitter(identity).call();
+  }
+
+  private static void stageGitlink(Git git, String path, ObjectId pointer) throws Exception {
+    DirCache cache = git.getRepository().lockDirCache();
+    try {
+      DirCacheEditor editor = cache.editor();
+      editor.add(
+          new DirCacheEditor.PathEdit(path) {
+            @Override
+            public void apply(DirCacheEntry entry) {
+              entry.setFileMode(FileMode.GITLINK);
+              entry.setObjectId(pointer);
+            }
+          });
+      assertThat(editor.commit()).isTrue();
+    } finally {
+      cache.unlock();
+    }
+  }
+
+  private static void stageGitlinkDeletion(Git git, String path) throws Exception {
+    DirCache cache = git.getRepository().lockDirCache();
+    try {
+      DirCacheEditor editor = cache.editor();
+      editor.add(new DirCacheEditor.DeletePath(path));
+      assertThat(editor.commit()).isTrue();
+    } finally {
+      cache.unlock();
+    }
+  }
+
+  private static void generateGitlinkLifecycleHistory(Path repositoryPath) throws Exception {
+    Files.createDirectories(repositoryPath);
+    try (Git git =
+        Git.init().setDirectory(repositoryPath.toFile()).setInitialBranch("main").call()) {
+      write(repositoryPath, "README.md", "Gitlink lifecycle fixture\n");
+      write(repositoryPath, "src/Stable.java", "final class Stable { int value = 1; }\n");
+      write(repositoryPath, "vendor/mixed", "text before Gitlink\n");
+      git.add().addFilepattern(".").call();
+      commit(git, "Create containing repository", "2025-03-01T09:00:00Z");
+      ObjectId firstPointer = git.getRepository().resolve(Constants.HEAD);
+
+      stageGitlink(git, "vendor/component", firstPointer);
+      commit(git, "Add submodule pointer", "2025-03-02T09:00:00Z");
+      ObjectId secondPointer = git.getRepository().resolve(Constants.HEAD);
+
+      write(repositoryPath, "src/Stable.java", "final class Stable { int value = 2; }\n");
+      git.add().addFilepattern("src/Stable.java").call();
+      stageGitlink(git, "vendor/component", secondPointer);
+      stageGitlink(git, "vendor/mixed", firstPointer);
+      commit(git, "Update submodule pointer", "2025-03-03T09:00:00Z");
+      ObjectId thirdPointer = git.getRepository().resolve(Constants.HEAD);
+
+      stageGitlinkDeletion(git, "vendor/component");
+      stageGitlink(git, "vendor/mixed", thirdPointer);
+      commit(git, "Delete submodule pointer", "2025-03-04T09:00:00Z");
+    }
   }
 
   private static void generateDeletionHistory(Path repositoryPath) throws Exception {

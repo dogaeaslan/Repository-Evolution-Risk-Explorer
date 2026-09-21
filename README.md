@@ -58,6 +58,8 @@ If the selected branch reaches a shallow-history boundary, the result is explici
 
 Binary content is detected from Git blobs rather than filename extensions. Binary changes remain valid change-frequency evidence, but line additions, deletions, and churn are unavailable for those changes. Each file reports whether future line-based metrics are fully available, partially available, or unavailable, together with its binary-change count.
 
+The MVP policy for Gitlink entries and submodules is documented in [docs/gitlink-submodule-policy.md](docs/gitlink-submodule-policy.md). Ingestion distinguishes Gitlink pointer changes from binary content and reports their frequency and line-metric limitations; dedicated API and dashboard presentation are still in progress.
+
 ### Deleted-file semantics
 
 A file identity is marked as deleted when it is absent at the selected branch tip, not merely absent at the end of the requested date range. Date ranges and path exclusions control which changes contribute metric evidence; they do not redefine the branch-tip lifecycle state. Consequently, a file with eligible historical changes can be reported as deleted even when its deletion occurred after the requested period or was itself excluded.

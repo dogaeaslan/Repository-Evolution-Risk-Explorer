@@ -132,6 +132,8 @@ class AnalysisControllerTest {
             true,
             1,
             1,
+            0,
+            1,
             LineMetricAvailability.UNAVAILABLE,
             List.of(evidence));
     return new RepositoryAnalysis(

@@ -5,13 +5,17 @@ public enum LineMetricAvailability {
   PARTIAL,
   UNAVAILABLE;
 
-  public static LineMetricAvailability fromChangeCounts(int commitCount, int binaryChangeCount) {
-    if (commitCount < 0 || binaryChangeCount < 0 || binaryChangeCount > commitCount) {
-      throw new IllegalArgumentException("Binary change count must be within the commit count.");
+  public static LineMetricAvailability fromChangeCounts(
+      int commitCount, int unavailableLineMetricChangeCount) {
+    if (commitCount < 0
+        || unavailableLineMetricChangeCount < 0
+        || unavailableLineMetricChangeCount > commitCount) {
+      throw new IllegalArgumentException(
+          "Unavailable line-metric change count must be within the commit count.");
     }
-    if (binaryChangeCount == 0) {
+    if (unavailableLineMetricChangeCount == 0) {
       return AVAILABLE;
     }
-    return binaryChangeCount == commitCount ? UNAVAILABLE : PARTIAL;
+    return unavailableLineMetricChangeCount == commitCount ? UNAVAILABLE : PARTIAL;
   }
 }
